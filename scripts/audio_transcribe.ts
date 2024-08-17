@@ -11,7 +11,7 @@ import { getPartName } from "../src/getPartName";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const partName = getPartName();
 
-const modelName = "gemini-1.5-pro";
+const modelName = "gemini-1.5-pro-exp-0801";
 const model = genAI.getGenerativeModel({
   model: modelName,
   generationConfig: {
@@ -21,11 +21,11 @@ const model = genAI.getGenerativeModel({
   safetySettings: [
     {
       category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-      threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
     },
     {
       category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-      threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
     },
     {
       category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -33,7 +33,7 @@ const model = genAI.getGenerativeModel({
     },
     {
       category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-      threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
     },
   ],
 });
@@ -52,8 +52,6 @@ ${fs.readFileSync("notes.txt", "utf8").trim()}
 const prompt = `Generate a transcript of the speech.
 
 - The speech is in Thai language.
-- DO start a new line after each utterance or sentence.
-- Each line should not be longer than 50 characters. If it is longer, split it into multiple lines, but keep the line lengths balanced.
 - For English words, if it is a common word, then spell it using lowercase (e.g. oscillator). If it is a proper noun, capitalize it properly (e.g. Google Chrome). If it's an API name or part of computer code, use verbatim capitalization (e.g. getElementById).
 - For Thai text, do not add a space between words. Only add spaces between sentences or when there is obvious pausing.
 - For technical terms, in general, spell it in English (e.g. canvas, vertex, scene). Only transliterate it to Thai if it is a very common word and commonly spelled in Thai (e.g. ลิงก์, เคส, อัพเกรด, โปรแกรมเมอร์).
@@ -86,6 +84,7 @@ for await (const chunk of result.stream) {
       : ""
   );
   out.write(chunkText);
+  process.stdout.write(".");
   usage = chunk.usageMetadata || usage;
 }
 

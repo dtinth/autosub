@@ -15,7 +15,7 @@ sm.batch
     {
       transcription_config: {
         language: "th",
-        operating_point: "enhanced",
+        operating_point: "standard", // enhanced
       },
     },
     "json-v2"

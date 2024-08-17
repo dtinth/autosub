@@ -8,9 +8,14 @@ function runIfExists<T>(name: string, callback: (data: T) => void) {
   }
 }
 
-interface ClaudeUsage {
+interface ClaudeOrOpenAIUsage {
+  // Claude
   input_tokens: number;
   output_tokens: number;
+
+  // OpenAI
+  prompt_tokens: number;
+  completion_tokens: number;
 }
 interface GeminiUsage {
   promptTokenCount: number;
@@ -22,6 +27,7 @@ const parts = JSON.parse(fs.readFileSync("artifacts/parts.json", "utf8"));
 const geminiFlash = { input: 0, output: 0 };
 const geminiPro = { input: 0, output: 0 };
 const claude = { input: 0, output: 0 };
+const openai = { input: 0, output: 0 };
 
 const countGemini = (usage: GeminiUsage) => {
   if (usage.modelName === "gemini-1.5-flash") {
@@ -32,9 +38,11 @@ const countGemini = (usage: GeminiUsage) => {
     geminiPro.output += usage.candidatesTokenCount;
   }
 };
-const countClaude = (usage: ClaudeUsage) => {
-  claude.input += usage.input_tokens;
-  claude.output += usage.output_tokens;
+const countClaudeOrOpenAI = (usage: ClaudeOrOpenAIUsage) => {
+  claude.input += usage.input_tokens || 0;
+  claude.output += usage.output_tokens || 0;
+  openai.input += usage.prompt_tokens || 0;
+  openai.output += usage.completion_tokens || 0;
 };
 
 for (const { name: partName } of parts) {
@@ -47,10 +55,13 @@ for (const { name: partName } of parts) {
     countGemini
   );
   runIfExists(
-    `artifacts/${partName}.claude_transcript.usage.json`,
-    countClaude
+    `artifacts/${partName}.improved_transcript.usage.json`,
+    countClaudeOrOpenAI
   );
-  runIfExists(`artifacts/${partName}.alignment.usage.json`, countClaude);
+  runIfExists(
+    `artifacts/${partName}.alignment.usage.json`,
+    countClaudeOrOpenAI
+  );
 }
 
 const usdToThb = 37;
@@ -85,6 +96,16 @@ lineItems.push({
   name: "Claude output",
   tokens: claude.output,
   cost: (claude.output / 1e6) * 15 * usdToThb,
+});
+lineItems.push({
+  name: "OpenAI input",
+  tokens: openai.input,
+  cost: (openai.input / 1e6) * 5 * usdToThb,
+});
+lineItems.push({
+  name: "OpenAI output",
+  tokens: openai.output,
+  cost: (openai.output / 1e6) * 15 * usdToThb,
 });
 
 console.table([

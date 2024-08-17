@@ -1,8 +1,22 @@
 import fs from "fs";
+import { parseArgs } from "util";
+
+const args = parseArgs({
+  options: {
+    partial: { type: "boolean" },
+    skip: { type: "string" },
+  },
+});
 
 const parts = JSON.parse(fs.readFileSync("artifacts/parts.json", "utf8"));
 const aligned: string[] = [];
-for (const { name: partName } of parts) {
+for (const { name: partName } of parts.slice(+args.values.skip! || 0)) {
+  if (
+    args.values.partial &&
+    !fs.existsSync(`artifacts/${partName}.alignment.txt`)
+  ) {
+    continue;
+  }
   aligned.push(fs.readFileSync(`artifacts/${partName}.alignment.txt`, "utf8"));
 }
 
@@ -49,3 +63,5 @@ for (const line of lines) {
 webvtt.push("");
 
 fs.writeFileSync("artifacts/subtitles.vtt", webvtt.join("\n"));
+
+console.log('Written to "artifacts/subtitles.vtt"');

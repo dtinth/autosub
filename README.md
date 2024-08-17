@@ -322,6 +322,7 @@ Here is my attempt at aligning the transcript with the ASR output:
 SPEECHMATICS_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
+OPENAI_API_KEY=
 ```
 
 ## Usage
@@ -350,15 +351,23 @@ tsx ../../scripts/partition.ts
 tsx ../../scripts/video_slice.ts
 tsx ../../scripts/audio_slice.ts
 
-# For each part...
-tsx ../../scripts/process_part.ts part_01
+# For first part:
+export PART_NAME=part_01
+tsx ../../scripts/audio_transcribe.ts # - or -
+tsx ../../scripts/video_transcribe.ts
 
-# The above is equivalent to:
-#   export PART_NAME=part_01
-#   tsx ../../scripts/audio_transcribe.ts # - or -
-#   tsx ../../scripts/video_transcribe.ts
-#   tsx ../../scripts/transcript_improve.ts
-#   tsx ../../scripts/align.ts
+# Create a "improvement_notes.txt" file.
+# This notes will be used in the transcript improvement process.
+touch improvement_notes.txt
+
+# Improve the transcript.
+tsx ../../scripts/transcript_improve.ts
+
+# Align the improved transcript with the ASR result.
+tsx ../../scripts/align.ts
+
+# For subsequent parts:
+tsx ../../scripts/process_part.ts part_02
 
 # Finally, combine the aligned parts into a single transcript.
 tsx ../../scripts/create_vtt.ts
