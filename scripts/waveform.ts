@@ -64,7 +64,7 @@ const main = async () => {
     }
   }
   writeFileSync(
-    "artifacts/waveform.json",
+    process.argv[3] || "artifacts/waveform.json",
     JSON.stringify({ waveform: result, words })
   );
 };
