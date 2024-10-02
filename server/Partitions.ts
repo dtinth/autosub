@@ -20,9 +20,11 @@ function duration(words: WordTimestamp[]) {
   return last - first;
 }
 
-function split(words: WordTimestamp[]): Tree {
+function split(words: WordTimestamp[], options: { short: boolean }): Tree {
+  const maxLength = options.short ? 60 : 3 * 60;
+  const minLength = options.short ? 15 : 30;
   const thisDuration = duration(words);
-  if (thisDuration < 3 * 60) {
+  if (thisDuration < maxLength) {
     return { words };
   }
   let bestCandidate:
@@ -38,7 +40,7 @@ function split(words: WordTimestamp[]): Tree {
     const right = words.slice(i);
     const leftDuration = duration(left);
     const rightDuration = duration(right);
-    if (leftDuration < 30 || rightDuration < 30) {
+    if (leftDuration < minLength || rightDuration < minLength) {
       continue;
     }
     const evenness =
@@ -54,8 +56,8 @@ function split(words: WordTimestamp[]): Tree {
     throw new Error("No best candidate found");
   }
   return {
-    left: split(bestCandidate.left),
-    right: split(bestCandidate.right),
+    left: split(bestCandidate.left, options),
+    right: split(bestCandidate.right, options),
     gap: bestCandidate.gap,
   };
 }
@@ -97,9 +99,13 @@ function visualize(words: WordTimestamp[], gap = 0, path = "") {
 
 export function partition(
   wordTimestamps: WordTimestamps,
-  log: (message: string) => void
+  options: {
+    short: boolean;
+    log: (message: string) => void;
+  }
 ): Partitions {
-  const root: Tree = split(wordTimestamps.words);
+  const { log, short } = options;
+  const root: Tree = split(wordTimestamps.words, { short });
   for (const message of visualizeTree(root)) {
     log(message);
   }

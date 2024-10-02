@@ -1,21 +1,22 @@
-import { inspect } from "bun";
+import { $, inspect } from "bun";
 import { createHash } from "crypto";
 import { Elysia, t } from "elysia";
-import fs from "fs";
-import Keyv from "keyv";
+import fs, { mkdirSync } from "fs";
 import { basename } from "path";
 import speechmatics from "speechmatics";
 import { codeBlock, icon, layout } from "./bootstrap";
+import { transcribeWithIApp } from "./iApp";
+import { createVttFromIApp } from "./iAppVtt";
+import { NotFound } from "./NotFound";
 import {
   findOperation,
   getOperation,
   getOperationLogs,
   OperationCreateResult,
-  runOperation,
 } from "./operations";
 import { partition, Partitions } from "./Partitions";
 import { SpeechmaticsASRResult } from "./SpeechmaticsASRResult";
-import { store } from "./store";
+import { AnyTarget, Target } from "./Target";
 import { html, respondWithPage } from "./View";
 import {
   generateWordTimestampsFromSpeechmatics,
@@ -26,7 +27,6 @@ const cwd = process.cwd();
 const hash = createHash("sha256").update(cwd).digest("hex");
 const port = 4573;
 const projectName = basename(cwd);
-const operationIdStore = new Keyv({ store: store, namespace: "operationIds" });
 
 const app = new Elysia({ prefix: `/projects/${hash}` })
   .get("/home", () =>
@@ -34,7 +34,12 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
       page.title = projectName;
       return html`
         <script>
-          function doPost(action) {
+          function doPost(action, e) {
+            if (e.metaKey || e.altKey || e.ctrlKey) {
+              e.preventDefault();
+              fetch(action, { method: "POST" });
+              return;
+            }
             const form = document.createElement("form");
             form.method = "POST";
             form.action = action;
@@ -44,7 +49,7 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
         </script>
         ${title("Basic ASR", "codicon:play")}
         <p>
-          ${operationLink("full_asr_speechmatics", {
+          ${operationLink(speechmaticsAsrTarget(), {
             actions: [
               { action: "asr?model=speechmatics", title: "Generate ASR" },
             ],
@@ -53,7 +58,7 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
 
         ${title("Word-level timestamps", "codicon:play")}
         <p>
-          ${operationLink("word_timestamps", {
+          ${operationLink(wordTimestampsTarget(), {
             actions: [
               {
                 action: "wordTimestamps",
@@ -65,45 +70,70 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
 
         ${title("Partitioning", "codicon:play")}
         <p>
-          ${operationLink("partitions", {
-            actions: [{ action: "partitions", title: "Generate partitions" }],
+          ${operationLink(partitionsTarget(), {
+            actions: [
+              { action: "partitions", title: "Generate partitions" },
+              {
+                action: "partitions?mode=short",
+                title: "Generate partitions (shorter)",
+              },
+            ],
           })}
         </p>
 
         ${title("Parts", "codicon:play")} ${partsTable()}
+        ${title("Subtitle", "codicon:play")}
+        <a href="vtt-iapp">VTT from iApp PRO</a>
       `;
     })
   )
   .post(
     "/asr",
     ({ query }) =>
-      respondWithOperation(async () => {
-        return speechmaticsAsr();
-      }),
+      respondWithOperation(() => speechmaticsAsrTarget().createOperation()),
     { query: t.Object({ model: t.String() }) }
   )
   .post("/wordTimestamps", ({ query }) =>
-    respondWithOperation(async () => {
-      return runOperation(`Generate word-level timestamps`, async (o) => {
-        await operationIdStore.set("word_timestamps", o.id);
-        const asrResult = await loadResult<SpeechmaticsASRResult>(
-          "full_asr_speechmatics"
-        );
-        return generateWordTimestampsFromSpeechmatics(asrResult);
-      });
-    })
+    respondWithOperation(() => wordTimestampsTarget().createOperation())
   )
-  .post("/partitions", () =>
-    respondWithOperation(async () => {
-      return runOperation("Generate partitions", async (o) => {
-        await operationIdStore.set("partitions", o.id);
-        const wordTimestamps = await loadResult<WordTimestamps>(
-          "word_timestamps"
-        );
-        return partition(wordTimestamps, o.log);
-      });
-    })
+  .post(
+    "/partitions",
+    ({ query }) =>
+      respondWithOperation(() =>
+        partitionsTarget().createOperation({
+          short: query.mode === "short",
+        })
+      ),
+    { query: t.Object({ mode: t.String() }) }
   )
+  .get(
+    "/audio",
+    async ({ query }) => {
+      const outFile = await getAudioPath(query.part);
+      return Bun.file(outFile);
+    },
+    {
+      query: t.Object({ part: t.String() }),
+    }
+  )
+  .post(
+    "/transcribe-iapp",
+    ({ query }) =>
+      respondWithOperation(() => iAppProTarget(query.part).createOperation()),
+    { query: t.Object({ part: t.String() }) }
+  )
+  .get("/vtt-iapp", async () => {
+    const partitions = await partitionsTarget().fetchResult();
+    const vtt = await createVttFromIApp({
+      partitions,
+      getResult: (partName) => iAppProTarget(partName).fetchResult(),
+    });
+    return new Response(vtt, {
+      headers: {
+        "Content-Type": "text/vtt;charset=utf-8",
+      },
+    });
+  })
   .get(
     "/operations",
     ({ query }) =>
@@ -153,45 +183,81 @@ function respondWithOperation(factory: () => Promise<OperationCreateResult>) {
   });
 }
 
-function speechmaticsAsr() {
-  return runOperation(`ASR with Speechmatics`, async (o) => {
-    await operationIdStore.set("full_asr_speechmatics", o.id);
-    const sm = new speechmatics.Speechmatics({
-      apiKey: process.env.SPEECHMATICS_API_KEY!,
-    });
+function speechmaticsAsrTarget() {
+  return new Target<void, SpeechmaticsASRResult>({
+    name: "full_asr_speechmatics",
+    title: "ASR with Speechmatics",
+    work: async (o) => {
+      const sm = new speechmatics.Speechmatics({
+        apiKey: process.env.SPEECHMATICS_API_KEY!,
+      });
 
-    o.log("Reading audio file...");
-    const input = new Blob([fs.readFileSync("audio.mp3")]);
+      o.log("Reading audio file...");
+      const input = new Blob([fs.readFileSync("audio.mp3")]);
 
-    o.log("Performing ASR on audio file...");
-    try {
-      const transcript = await sm.batch.transcribe(
-        { data: input, fileName: `${projectName}_audio.mp3` },
-        {
-          transcription_config: {
-            language: "th",
-            operating_point: "standard", // enhanced
+      o.log("Performing ASR on audio file...");
+      try {
+        const transcript = await sm.batch.transcribe(
+          { data: input, fileName: `${projectName}_audio.mp3` },
+          {
+            transcription_config: {
+              language: "th",
+              operating_point: "standard", // enhanced
+            },
           },
-        },
-        "json-v2"
-      );
+          "json-v2"
+        );
 
-      o.log("ASR completed.");
-      return transcript;
-    } catch (error) {
-      o.log("ASR failed.");
-      throw error;
-    }
+        o.log("ASR completed.");
+        return transcript as SpeechmaticsASRResult;
+      } catch (error) {
+        o.log("ASR failed.");
+        throw error;
+      }
+    },
+  });
+}
+
+function wordTimestampsTarget() {
+  return new Target<void, WordTimestamps>({
+    name: "word_timestamps",
+    title: "Generate word-level timestamps",
+    work: async (o) => {
+      const asrResult = await speechmaticsAsrTarget().fetchResult();
+      return generateWordTimestampsFromSpeechmatics(asrResult);
+    },
+  });
+}
+
+function iAppProTarget(partName: string) {
+  return new Target<void, any>({
+    name: `iapp_pro:${partName}`,
+    title: "Transcribe with iApp ASR PRO",
+    work: async (o) => {
+      const path = await getAudioPath(partName);
+      return transcribeWithIApp(path, { pro: true, log: o.log });
+    },
+  });
+}
+
+function partitionsTarget() {
+  return new Target<{ short: boolean }, Partitions>({
+    name: "partitions",
+    title: "Generate partitions",
+    work: async (o, { short }) => {
+      const wordTimestamps = await wordTimestampsTarget().fetchResult();
+      return partition(wordTimestamps, { short, log: o.log });
+    },
   });
 }
 
 async function operationLink(
-  key: string,
+  target: AnyTarget,
   options: {
     actions: { action: string; title: string }[];
   }
 ) {
-  const id = await operationIdStore.get<string>(key);
+  const id = await target.tryFetchOperationId();
   let btnClass = "btn-secondary";
   let href = "";
   if (id) {
@@ -205,14 +271,16 @@ async function operationLink(
     href = `operations?id=${id}`;
   }
   const mainButton = href
-    ? html`<a href="${href}" class="btn ${btnClass}">${key}</a>`
-    : html`<button class="btn ${btnClass}" disabled>${key}</button>`;
+    ? html`<a href="${href}" class="btn btn-sm ${btnClass}">${target.name}</a>`
+    : html`<button class="btn btn-sm ${btnClass}" disabled>
+        ${target.name}
+      </button>`;
   return html`
     <div class="btn-group">
       ${mainButton}
       <button
         type="button"
-        class="btn ${btnClass} dropdown-toggle dropdown-toggle-split"
+        class="btn btn-sm ${btnClass} dropdown-toggle dropdown-toggle-split"
         data-bs-toggle="dropdown"
         aria-expanded="false"
       >
@@ -224,9 +292,8 @@ async function operationLink(
             html`<li>
               <a
                 class="dropdown-item"
-                href="javascript:doPost(${encodeURIComponent(
-                  JSON.stringify(x.action)
-                )})"
+                href="javascript:"
+                onclick="doPost(${JSON.stringify(x.action)},event)"
                 >${x.title}</a
               >
             </li>`
@@ -236,59 +303,55 @@ async function operationLink(
   `;
 }
 
-async function loadResult<T>(key: string) {
-  const id = await operationIdStore.get<string>(key);
-  if (!id) {
-    throw new Error(`Operation "${key}" not found`);
-  }
-  const operation = await getOperation(id);
-  if (operation.status === "completed") {
-    return operation.result as T;
-  } else {
-    throw new Error(`Operation "${key}" is not completed`);
-  }
-}
-
-async function tryLoadResult<T>(key: string) {
-  const id = await operationIdStore.get<string>(key);
-  if (!id) {
-    return undefined;
-  }
-  const operation = await getOperation(id);
-  if (operation.status === "completed") {
-    return operation.result as T;
-  } else {
-    return undefined;
-  }
-}
-
 async function partsTable() {
-  const parts = await tryLoadResult<Partitions>("partitions");
-  if (!parts) {
-    return null;
-  }
+  const parts = await partitionsTarget().tryFetchResult();
+  if (!parts) return null;
   return html`
     <table class="table table-striped table-hover">
       <thead>
         <tr>
           <th>Part</th>
-          <th>Start</th>
-          <th>End</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         ${parts.partitions.map(
           (part) => html`
             <tr>
-              <td>${part.name}</td>
-              <td>${part.start.toFixed(2)}</td>
-              <td>${part.end.toFixed(2)}</td>
+              <td><a href="audio?part=${part.name}">${part.name}</a></td>
+              <td>
+                ${operationLink(iAppProTarget(part.name), {
+                  actions: [
+                    {
+                      action: `transcribe-iapp?part=${part.name}`,
+                      title: "Transcribe with iApp ASR",
+                    },
+                  ],
+                })}
+              </td>
             </tr>
           `
         )}
       </tbody>
     </table>
   `;
+}
+
+async function getPart(name: string) {
+  const parts = await partitionsTarget().fetchResult();
+  const part = parts.partitions.find((x) => x.name === name);
+  if (!part) throw new NotFound(`Part "${name}" not found`);
+  return part;
+}
+
+async function getAudioPath(partName: string) {
+  const part = await getPart(partName);
+  const outFile = "artifacts/" + part.name + ".mp3";
+  if (!fs.existsSync(outFile)) {
+    mkdirSync("artifacts", { recursive: true });
+    await $`ffmpeg -i audio.mp3 -ss ${part.start} -to ${part.end} -c copy ${outFile} -y`;
+  }
+  return outFile;
 }
 
 app.listen(
