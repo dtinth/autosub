@@ -325,7 +325,7 @@ GEMINI_API_KEY=
 OPENAI_API_KEY=
 ```
 
-## Usage
+## Usage (Gemini)
 
 ```sh
 # Start a project folder.
@@ -340,10 +340,18 @@ ffmpeg -i video.mp4 -vn -c:a libmp3lame -q:a 4 audio.mp3
 # This helps improve the transcript accuracy.
 touch notes.txt
 
-# Perform ASR. This generates an ASR result file, which is quite
-# inaccurate for Thai language, but has timing information.
+# -- Long audio ASR --
+# Perform ASR on the whole audio file so that we can get the timing information.
+# This generates an ASR result file, which is quite inaccurate for Thai language, but has timing information.
+
+# Option A: Speechmatics
 tsx ../../scripts/asr.ts
 
+# Option B: iApp
+tsx ../../scripts/asr_iapp.ts
+tsx ../../scripts/iapp_to_speechmatics.ts
+
+# -- Partition and slicing --
 # Use the ASR result to partition the video/audio into parts.
 tsx ../../scripts/partition.ts
 
