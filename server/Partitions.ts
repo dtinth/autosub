@@ -20,9 +20,19 @@ function duration(words: WordTimestamp[]) {
   return last - first;
 }
 
-function split(words: WordTimestamp[], options: { short: boolean }): Tree {
-  const maxLength = options.short ? 60 : 3 * 60;
-  const minLength = options.short ? 15 : 30;
+const config = {
+  long: { min: 2 * 60, max: 8 * 60 },
+  normal: { min: 30, max: 3 * 60 },
+  short: { min: 15, max: 60 },
+};
+
+function split(
+  words: WordTimestamp[],
+  options: { mode: "long" | "normal" | "short" }
+): Tree {
+  const activeConfig = config[options.mode];
+  const maxLength = activeConfig.max;
+  const minLength = activeConfig.min;
   const thisDuration = duration(words);
   if (thisDuration < maxLength) {
     return { words };
@@ -100,12 +110,12 @@ function visualize(words: WordTimestamp[], gap = 0, path = "") {
 export function partition(
   wordTimestamps: WordTimestamps,
   options: {
-    short: boolean;
+    mode?: "long" | "normal" | "short";
     log: (message: string) => void;
   }
 ): Partitions {
-  const { log, short } = options;
-  const root: Tree = split(wordTimestamps.words, { short });
+  const { log, mode = "normal" } = options;
+  const root: Tree = split(wordTimestamps.words, { mode });
   for (const message of visualizeTree(root)) {
     log(message);
   }

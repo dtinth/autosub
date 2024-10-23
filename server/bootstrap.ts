@@ -57,11 +57,14 @@ export function icon(name: string) {
 }
 
 export function codeBlock(children: Html) {
-  return constrainedCard(html`<pre
-    class="p-3 rounded mb-0"
+  return html`<textarea
+    class="p-3 form-control mb-0 font-monospace"
     style="letter-spacing: 0;"
-    wrap
-  ><code>${children}</code></pre>`);
+    rows="16"
+    readonly
+  >
+${children}</textarea
+  >`;
 }
 
 export function card(children: Html) {
