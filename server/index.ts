@@ -4,7 +4,9 @@ import { Elysia, t } from "elysia";
 import fs, { mkdirSync } from "fs";
 import { basename } from "path";
 import speechmatics from "speechmatics";
+import { alignTranscript } from "./alignTranscript";
 import { codeBlock, icon, layout } from "./bootstrap";
+import { createVtt, VttSegment } from "./createVtt";
 import { extractTag } from "./extractTag";
 import { transcribeWithGemini } from "./gemini";
 import { transcribeWithIApp } from "./iApp";
@@ -22,7 +24,7 @@ import {
 import { partition, Partitions } from "./Partitions";
 import { SpeechmaticsASRResult } from "./SpeechmaticsASRResult";
 import { AnyTarget, Target } from "./Target";
-import { html, respondWithPage } from "./View";
+import { Html, html, respondWithPage } from "./View";
 import { createWaveform } from "./waveform";
 import {
   generateWordTimestampsFromSpeechmatics,
@@ -34,12 +36,24 @@ const hash = createHash("sha256").update(cwd).digest("hex");
 const port = 4573;
 const projectName = basename(cwd);
 
+const availableAsrPresets = ["speechmatics", "youtube"] as const;
+type AsrPreset = (typeof availableAsrPresets)[number];
+
+const availableTranscriberPresets = ["iapp", "openai", "gemini"] as const;
+type TranscriberPreset = (typeof availableTranscriberPresets)[number];
+
 const app = new Elysia({ prefix: `/projects/${hash}` })
-  .get("/home", () =>
-    respondWithPage(layout, async (page) => {
-      page.title = projectName;
-      return html`
-        <script>
+  .get(
+    "/home",
+    ({ query, request }) =>
+      respondWithPage(layout, async (page) => {
+        const asrPreset = (query.asr ?? "youtube") as AsrPreset;
+        const transcriberPreset = (query.preset ??
+          "gemini") as TranscriberPreset;
+        page.title = projectName;
+
+        // Bootstrap script
+        page.write(html`<script>
           function doPost(action, e) {
             if (e.metaKey || e.altKey || e.ctrlKey) {
               e.preventDefault();
@@ -52,49 +66,128 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
             document.body.appendChild(form);
             form.submit();
           }
-        </script>
-        ${title("Basic ASR", "codicon:play")}
-        <p>
-          ${operationLink(speechmaticsAsrTarget(), {
-            actions: [
-              { action: "asr?model=speechmatics", title: "Generate ASR" },
-            ],
-          })}
-          <a href="asr-json" class="btn btn-sm btn-secondary">View JSON file</a>
-        </p>
+        </script>`);
 
-        ${title("Waveform", "codicon:play")}
-        <p>
-          ${operationLink(waveformTarget(), {
-            actions: [{ action: "waveform", title: "Generate waveform" }],
-          })}
-          <a href="waveform" class="btn btn-sm btn-secondary"
-            >View waveform file</a
+        const section = (titleText: string) => {
+          page.write(title(titleText, "codicon:play"));
+        };
+
+        section("Transcription notes");
+        const notesFile = Bun.file("notes.txt");
+        const notes = (await notesFile.exists()) ? await notesFile.text() : "";
+        page.write(html`
+          <form method="post" action="transcription-notes">
+            <label class="d-block"
+              >Notes for transcription
+              <textarea
+                class="form-control font-monospace"
+                name="notes"
+                rows="5"
+              >
+${notes}</textarea
+              >
+            </label>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </form>
+        `);
+
+        section("Preset");
+        const presetButton = (
+          key: string,
+          value: string,
+          active: boolean
+        ) => html`
+          <a
+            href="?${new URLSearchParams([
+              ...Array.from(new URL(request.url).searchParams).filter(
+                (x) => x[0] !== key
+              ),
+              [key, value],
+            ]).toString()}"
+            class="btn btn-sm ${active
+              ? "btn-secondary"
+              : "btn-outline-secondary"}"
           >
-        </p>
+            ${value}
+          </a>
+        `;
+        page.write(html`<div class="mb-3 d-flex gap-2 align-items-baseline">
+          ASR:
+          <div class="btn-group">
+            ${availableAsrPresets.map((presetOption) =>
+              presetButton("asr", presetOption, asrPreset === presetOption)
+            )}
+          </div>
+        </div>`);
+        page.write(html`<div class="mb-3 d-flex gap-2 align-items-baseline">
+          Transcriber:
+          <div class="btn-group">
+            ${availableTranscriberPresets.map((presetOption) =>
+              presetButton(
+                "preset",
+                presetOption,
+                transcriberPreset === presetOption
+              )
+            )}
+          </div>
+        </div>`);
 
-        ${title("Word-level timestamps", "codicon:play")}
-        <p>
-          ${operationLink(wordTimestampsTarget(), {
-            actions: [
-              {
-                action: "wordTimestamps",
-                title: "Generate word-level timestamps from Speechmatics ASR",
-              },
-              {
-                action: "importYouTubeForm",
-                title:
-                  "Import word-level timestamps from YouTube Timed Text JSON",
-              },
-            ],
-          })}
-          <a href="words-speechmatics" class="btn btn-sm btn-secondary"
-            >Export as Speechmatics</a
-          >
-        </p>
+        {
+          section("Obtain word-level timestamps");
+          if (asrPreset === "speechmatics") {
+            page.write(html`<ol>
+              <li>
+                Perform ASR with Speechmatics.
+                <p>
+                  ${operationLink(speechmaticsAsrTarget(), {
+                    actions: [
+                      {
+                        action: "asr?model=speechmatics",
+                        title: "Generate ASR",
+                      },
+                    ],
+                  })}
+                  <a href="asr-json" class="btn btn-sm btn-secondary"
+                    >View JSON file</a
+                  >
+                </p>
+              </li>
+              <li>
+                Convert to word-level timestamps.
+                <p>
+                  ${operationLink(wordTimestampsTarget(), {
+                    actions: [
+                      {
+                        action: "wordTimestamps",
+                        title:
+                          "Generate word-level timestamps from Speechmatics",
+                      },
+                    ],
+                  })}
+                </p>
+              </li>
+            </ol>`);
+          } else if (asrPreset === "youtube") {
+            page.write(html`<ol>
+              <li>
+                Import YouTube timed text JSON.
+                <p>
+                  ${operationLink(importYouTubeTarget(), {
+                    actions: [
+                      {
+                        action: "importYouTubeForm",
+                        title: "Import YouTube timed text JSON",
+                      },
+                    ],
+                  })}
+                </p>
+              </li>
+            </ol>`);
+          }
+        }
 
-        ${title("Partitioning", "codicon:play")}
-        <p>
+        section("Partitionin into parts");
+        page.write(html`<p>
           ${operationLink(partitionsTarget(), {
             actions: [
               {
@@ -111,16 +204,68 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
               },
             ],
           })}
-        </p>
+        </p>`);
 
-        ${title("Parts", "codicon:play")} ${partsTable()}
-        ${title("Transcript", "codicon:play")}
-        <a href="transcript">Combined Transcript</a>
+        section("Process each part");
+        page.write(html`${partsTable(transcriberPreset)}`);
+        if (transcriberPreset === "gemini") {
+          page.write(html`<a href="transcript">View combined Transcript</a>`);
 
-        ${title("Subtitle", "codicon:play")}
-        <a href="vtt-iapp">VTT from iApp PRO</a>
-      `;
-    })
+          section("Align");
+          page.write(html`<p>
+            ${operationLink(alignTarget(), {
+              actions: [{ action: "align", title: "Align transcript" }],
+            })}
+          </p>`);
+          page.write(html`<p><a href="alignment">Show alignment</a></p>`);
+          page.write(html`<p><a href="vtt-aligned">VTT</a></p>`);
+        }
+
+        if (transcriberPreset === "iapp") {
+          section("Subtitles");
+          page.write(html`
+            ${query.preset === "iapp"
+              ? html`<a href="vtt-iapp">VTT from iApp PRO</a>`
+              : ""}
+          `);
+        }
+
+        section("Generate waveform");
+        page.write(html`<p>
+          ${operationLink(waveformTarget(), {
+            actions: [{ action: "waveform", title: "Generate waveform" }],
+          })}
+          <a href="waveform" class="btn btn-sm btn-secondary"
+            >View waveform file</a
+          >
+        </p>`);
+
+        section("Export word-level timestamps");
+        page.write(html`<p>
+          <a href="words-speechmatics" class="btn btn-sm btn-secondary"
+            >Export as Speechmatics</a
+          >
+        </p>`);
+      }),
+    {
+      query: t.Object({
+        preset: t.Optional(t.String()),
+        asr: t.Optional(t.String()),
+      }),
+    }
+  )
+  .post(
+    "/transcription-notes",
+    async ({ body }) => {
+      await Bun.write("notes.txt", body.notes);
+      return new Response(null, {
+        status: 303,
+        headers: {
+          location: "home",
+        },
+      });
+    },
+    { body: t.Object({ notes: t.String() }) }
   )
   .post(
     "/asr",
@@ -234,6 +379,101 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
       ),
     { query: t.Object({ part: t.String() }) }
   )
+  .post("/align", () =>
+    respondWithOperation(() => alignTarget().createOperation())
+  )
+  .get("/alignment", async () => {
+    return respondWithPage(layout, async (page) => {
+      const { outputRows, asrWords } = await alignTarget().fetchResult();
+      return html` <h1>Alignment result</h1>
+        <style>
+          .alignment[data-kind="exact"] {
+            color: var(--bs-green);
+          }
+          .alignment[data-kind="approx"] {
+            color: var(--bs-orange);
+          }
+          .alignment[data-kind="missing"] {
+            color: var(--bs-red);
+          }
+        </style>
+        <table>
+          <thead>
+            <tr>
+              <th>Transcript</th>
+              <th nowrap style="text-align: right; padding-left :1ch">
+                Start time
+              </th>
+              <th nowrap style="text-align: right; padding-left :1ch">
+                End time
+              </th>
+              <th style="padding-left: 1ch">Alignment source</th>
+            </tr>
+          </thead>
+          ${outputRows.map((row) => {
+            const alignedWords = row.words.filter((word) => word.alignment);
+            const start = Math.min(
+              ...alignedWords.map((word) => word.alignment!.start)
+            );
+            const end = Math.max(
+              ...alignedWords.map((word) => word.alignment!.end)
+            );
+            const startIndex = Math.min(
+              ...alignedWords.map((word) => word.alignment!.index)
+            );
+            const endIndex = Math.max(
+              ...alignedWords.map((word) => word.alignment!.index)
+            );
+            const usedWords = asrWords.slice(startIndex, endIndex + 1);
+            const words = usedWords.map((word) => word.word).join(" ");
+            const codes = [...row.text] as Html[];
+            for (const word of row.words) {
+              const startIndex = word.index;
+              const endIndex = word.index + [...word.word].length;
+              const kind = word.alignment
+                ? word.alignment.exact
+                  ? "exact"
+                  : "approx"
+                : "missing";
+              // prettier-ignore
+              codes[startIndex] = html`<span class="alignment" data-kind="${kind}">${codes[startIndex]}`;
+              codes[endIndex - 1] = html`${codes[endIndex - 1]}</span>`;
+            }
+            return html`
+              <tr data-words="${JSON.stringify(row.words)}">
+                <td style="white-space:pre-wrap">${codes.filter((x) => x)}</td>
+                <td align="right">${start.toFixed(2)}s</td>
+                <td align="right">${end.toFixed(2)}s</td>
+                <td class="text-muted" style="padding-left: 1ch">${words}</td>
+              </tr>
+            `;
+          })}
+        </table>`;
+    });
+  })
+  .get("/vtt-aligned", async () => {
+    const segments: VttSegment[] = [];
+    const { outputRows } = await alignTarget().fetchResult();
+    for (const row of outputRows) {
+      const alignedWords = row.words.filter((word) => word.alignment);
+      const start = Math.min(
+        ...alignedWords.map((word) => word.alignment!.start)
+      );
+      const end = Math.max(...alignedWords.map((word) => word.alignment!.end));
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        const lastSegment = segments[segments.length - 1];
+        if (lastSegment && lastSegment.end >= start - 0.05) {
+          lastSegment.end = start - 0.05;
+        }
+        segments.push({ text: row.text, start, end });
+      }
+    }
+    return new Response(createVtt(segments), {
+      headers: {
+        "Content-Type": "text/vtt;charset=utf-8",
+      },
+    });
+  })
   .get("/vtt-iapp", async () => {
     const partitions = await partitionsTarget().fetchResult();
     const vtt = await createVttFromIApp({
@@ -247,15 +487,8 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
     });
   })
   .get("/transcript", async () => {
-    const { partitions } = await partitionsTarget().fetchResult();
-    const parts: string[] = [];
-    for (const partition of partitions) {
-      const transcript = await improveTranscriptTarget(
-        partition.name
-      ).fetchResult();
-      parts.push(extractTag(transcript.out, "ANSWER"));
-    }
-    return new Response(parts.join("\n"), {
+    const combinedTranscript = await getCombinedTranscript();
+    return new Response(combinedTranscript, {
       headers: {
         "Content-Type": "text/vtt;charset=utf-8",
       },
@@ -321,6 +554,19 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
       }),
     { query: t.Object({ id: t.String() }) }
   );
+
+async function getCombinedTranscript() {
+  const { partitions } = await partitionsTarget().fetchResult();
+  const parts: string[] = [];
+  for (const partition of partitions) {
+    const transcript = await improveTranscriptTarget(
+      partition.name
+    ).fetchResult();
+    parts.push(extractTag(transcript.out, "ANSWER"));
+  }
+  const combinedTranscript = parts.join("\n");
+  return combinedTranscript;
+}
 
 function title(text: string, iconName: string) {
   return html`<h2 class="mt-4 mb-2 text-muted h4">
@@ -438,6 +684,21 @@ function improveTranscriptTarget(partName: string) {
   });
 }
 
+function alignTarget() {
+  type Result = Awaited<ReturnType<typeof alignTranscript>>;
+  return new Target<void, Result>({
+    name: `alignment`,
+    title: "Align transcript",
+    work: async (o) => {
+      const wordTimestamps = await wordTimestampsTarget().fetchResult();
+      const combinedTranscript = await getCombinedTranscript();
+      return alignTranscript(combinedTranscript, wordTimestamps, {
+        log: o.log,
+      });
+    },
+  });
+}
+
 function partitionsTarget() {
   return new Target<{ mode: "long" | "normal" | "short" }, Partitions>({
     name: "partitions",
@@ -511,9 +772,10 @@ async function operationLink(
   `;
 }
 
-async function partsTable() {
+async function partsTable(preset: TranscriberPreset) {
   const parts = await partitionsTarget().tryFetchResult();
   if (!parts) return null;
+
   return html`
     <table class="table table-striped table-hover">
       <thead>
@@ -523,47 +785,59 @@ async function partsTable() {
         </tr>
       </thead>
       <tbody>
-        ${parts.partitions.map(
-          (part) => html`
+        ${parts.partitions.map((part) => {
+          const actions: Html[] = [];
+          if (preset === "iapp") {
+            actions.push(
+              operationLink(iAppProTarget(part.name), {
+                actions: [
+                  {
+                    action: `transcribe-iapp?part=${part.name}`,
+                    title: "Transcribe with iApp ASR",
+                  },
+                ],
+              })
+            );
+          }
+          if (preset === "openai") {
+            actions.push(
+              operationLink(openaiTranscribeTarget(part.name), {
+                actions: [
+                  {
+                    action: `transcribe-openai?part=${part.name}`,
+                    title: "Transcribe with OpenAI",
+                  },
+                ],
+              })
+            );
+          }
+          if (preset === "gemini") {
+            actions.push(
+              operationLink(geminiTranscribeTarget(part.name), {
+                actions: [
+                  {
+                    action: `transcribe-gemini?part=${part.name}`,
+                    title: "Transcribe with Gemini",
+                  },
+                ],
+              }),
+              operationLink(improveTranscriptTarget(part.name), {
+                actions: [
+                  {
+                    action: `improve?part=${part.name}`,
+                    title: "Improve with Claude",
+                  },
+                ],
+              })
+            );
+          }
+          return html`
             <tr>
               <td><a href="audio?part=${part.name}">${part.name}</a></td>
-              <td>
-                ${operationLink(iAppProTarget(part.name), {
-                  actions: [
-                    {
-                      action: `transcribe-iapp?part=${part.name}`,
-                      title: "Transcribe with iApp ASR",
-                    },
-                  ],
-                })}
-                ${operationLink(openaiTranscribeTarget(part.name), {
-                  actions: [
-                    {
-                      action: `transcribe-openai?part=${part.name}`,
-                      title: "Transcribe with OpenAI",
-                    },
-                  ],
-                })}
-                ${operationLink(geminiTranscribeTarget(part.name), {
-                  actions: [
-                    {
-                      action: `transcribe-gemini?part=${part.name}`,
-                      title: "Transcribe with Gemini",
-                    },
-                  ],
-                })}
-                ${operationLink(improveTranscriptTarget(part.name), {
-                  actions: [
-                    {
-                      action: `improve?part=${part.name}`,
-                      title: "Improve with Claude",
-                    },
-                  ],
-                })}
-              </td>
+              <td>${actions}</td>
             </tr>
-          `
-        )}
+          `;
+        })}
       </tbody>
     </table>
   `;

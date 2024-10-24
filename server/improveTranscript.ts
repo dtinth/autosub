@@ -11,6 +11,7 @@ export async function improveTranscript(
   }
 ) {
   const prompt = getPrompt(transcript);
+  options.log("Prompt text:\n" + prompt);
 
   const stream = anthropic.messages.stream({
     model: "claude-3-5-sonnet-20241022",
@@ -34,7 +35,7 @@ export async function improveTranscript(
     }
   }
 
-  return { out, usage };
+  return { prompt, out, usage };
 }
 
 function getPrompt(transcript: string) {

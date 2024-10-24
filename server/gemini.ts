@@ -42,6 +42,7 @@ export async function transcribeWithGemini(
 
   const base64str = fs.readFileSync(inPath, "base64");
   const prompt = getPrompt();
+  options.log("Prompt text:\n" + prompt);
 
   const result = await model.generateContentStream([
     {
@@ -64,7 +65,7 @@ export async function transcribeWithGemini(
     usage = chunk.usageMetadata || usage;
   }
 
-  return { out, usage };
+  return { prompt, out, usage };
 }
 
 function getPrompt() {
