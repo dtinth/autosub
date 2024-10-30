@@ -1,0 +1,2 @@
+#!/bin/bash -e
+yt-dlp -f bestaudio --extract-audio --audio-format mp3 --output audio.mp3 --write-auto-sub --sub-format json3 --sub-langs '.*-orig' "$1"

@@ -1,11 +1,12 @@
 import { $, inspect } from "bun";
 import { createHash } from "crypto";
 import { Elysia, t } from "elysia";
-import fs, { mkdirSync } from "fs";
+import fs, { mkdirSync, readdirSync } from "fs";
 import { basename } from "path";
 import speechmatics from "speechmatics";
 import { alignTranscript } from "./alignTranscript";
 import { codeBlock, icon, layout } from "./bootstrap";
+import { createLogger } from "./createLogger";
 import { createVtt, VttSegment } from "./createVtt";
 import { extractTag } from "./extractTag";
 import { transcribeWithGemini } from "./gemini";
@@ -43,6 +44,7 @@ const availableTranscriberPresets = ["iapp", "openai", "gemini"] as const;
 type TranscriberPreset = (typeof availableTranscriberPresets)[number];
 
 const app = new Elysia({ prefix: `/projects/${hash}` })
+  .use(createLogger())
   .get(
     "/home",
     ({ query, request }) =>
@@ -186,7 +188,7 @@ ${notes}</textarea
           }
         }
 
-        section("Partitionin into parts");
+        section("Partitioning into parts");
         page.write(html`<p>
           ${operationLink(partitionsTarget(), {
             actions: [
@@ -285,8 +287,19 @@ ${notes}</textarea
         }
       )
   )
-  .post("/importYouTubeForm", async () =>
-    respondWithPage(layout, async (page) => {
+  .post("/importYouTubeForm", async () => {
+    // Attempt to find "audio.mp3.*.json3"
+    const foundSubtitleFile = readdirSync(cwd).find((file) =>
+      file.match(/^audio\.mp3\..*\.json3$/)
+    );
+    if (foundSubtitleFile) {
+      const json = await Bun.file(foundSubtitleFile).text();
+      return respondWithOperation(() =>
+        importYouTubeTarget().createOperation({ json })
+      );
+    }
+
+    return respondWithPage(layout, async (page) => {
       page.title = "Import from YouTube";
       page.write(html`
         <form method="post" action="importYouTube">
@@ -297,8 +310,8 @@ ${notes}</textarea
           <button type="submit" class="btn btn-primary">Import</button>
         </form>
       `);
-    })
-  )
+    });
+  })
   .post(
     "/importYouTube",
     async ({ body }) =>
@@ -452,8 +465,12 @@ ${notes}</textarea
     });
   })
   .get("/vtt-aligned", async () => {
-    const segments: VttSegment[] = [];
+    let segments: VttSegment[] = [];
     const { outputRows } = await alignTarget().fetchResult();
+
+    // https://help.happyscribe.com/en/articles/9174614-what-are-subtitle-gaps
+    const minimumGap = (1 / 24) * 2;
+
     for (const row of outputRows) {
       const alignedWords = row.words.filter((word) => word.alignment);
       const start = Math.min(
@@ -462,12 +479,17 @@ ${notes}</textarea
       const end = Math.max(...alignedWords.map((word) => word.alignment!.end));
       if (Number.isFinite(start) && Number.isFinite(end)) {
         const lastSegment = segments[segments.length - 1];
-        if (lastSegment && lastSegment.end >= start - 0.05) {
-          lastSegment.end = start - 0.05;
+        if (lastSegment && lastSegment.end >= start - minimumGap) {
+          lastSegment.end = start - minimumGap;
         }
         segments.push({ text: row.text, start, end });
       }
     }
+
+    segments = segments.filter(
+      (s) => s.text.trim() && s.end - s.start > minimumGap
+    );
+
     return new Response(createVtt(segments), {
       headers: {
         "Content-Type": "text/vtt;charset=utf-8",

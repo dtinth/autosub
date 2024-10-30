@@ -69,7 +69,10 @@ export async function alignTranscript(
   diffSequences(
     transcriptWords.length,
     asrWords.length,
-    (i, j) => transcriptWords[i].word.localeCompare(asrWords[j].word) === 0,
+    (i, j) =>
+      transcriptWords[i].word.localeCompare(asrWords[j].word, ["en", "th"], {
+        sensitivity: "base",
+      }) === 0,
     (nCommon, tIndex, aIndex) => {
       groups.push({
         aligned: false,
@@ -87,8 +90,33 @@ export async function alignTranscript(
   );
 
   // Interpolate the remaining words
-  for (const group of groups) {
-    if (!group.fromAsr.length) continue;
+  for (const [groupIndex, group] of groups.entries()) {
+    if (!group.fromAsr.length) {
+      const previousGroup = groups[groupIndex - 1];
+      const nextGroup = groups[groupIndex + 1];
+      const lastWord = previousGroup?.fromAsr.slice(-1)[0];
+      const previousGroupEndTime = lastWord?.end;
+      const nextGroupStartTime = nextGroup?.fromAsr[0]?.start;
+      if (!previousGroupEndTime || !nextGroupStartTime) continue;
+
+      // Naively interpolate the timing into the transcript, for lack of a better method
+      const groupStart = previousGroupEndTime;
+      const groupDuration = nextGroupStartTime - groupStart;
+      for (const [i, word] of group.fromTranscript.entries()) {
+        const start =
+          groupStart + (i / group.fromTranscript.length) * groupDuration;
+        const end =
+          groupStart + ((i + 1) / group.fromTranscript.length) * groupDuration;
+        word.alignment = {
+          start,
+          end,
+          exact: group.aligned,
+          index: lastWord.index,
+        };
+      }
+
+      continue;
+    }
     const resolveTime = (t: number) => {
       // t is a fraction of the way through the group, from 0 to group.fromAsr.length
       const index = Math.min(Math.floor(t), group.fromAsr.length - 1);
@@ -117,7 +145,7 @@ export async function alignTranscript(
       };
     }
   }
-
+  log("Aligned.");
   return { outputRows, asrWords };
 }
 
