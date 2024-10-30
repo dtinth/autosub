@@ -89,6 +89,12 @@ const app = new Elysia({ prefix: `/projects/${hash}` })
 ${notes}</textarea
               >
             </label>
+            ${notes.trim() === ""
+              ? html`<div class="alert alert-warning mt-1">
+                  Adding notes to the project can improve the quality of
+                  transcription.
+                </div>`
+              : ""}
             <button type="submit" class="btn btn-primary">Save</button>
           </form>
         `);

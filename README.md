@@ -10,7 +10,7 @@ This workflow uses a combination of models:
 
 - **Speechmatics ASR** — Transcribes Thai text with lower accuracy, but with highly-precise word-level timestamps.
 - **Gemini 1.5 Pro** — This multimodal model can listen and watch a tech talk and generate a highly accurate transcript. Being mainly a language model, it knows a lot of technical terms. It can also handle the situation where the speaker speaks less common Thai words (such as words from northern Thai region). Being multimodal, it can read the slides in the video and generate transcripts more accurately. However, the model process media input in one second chunks, so it is not possible to obtain a precise timestamp. Moreover, it often hallucinates timecode, so the timing information from this model is unusable. It also tends to ignore formatting instructions in the prompt.
-- **Claude 3.5 Sonnet** — Used to post-process the transcript to improve its formatting, as well as aligning the transcript to ASR results.
+- **Claude 3.5 Sonnet** — Used to post-process the transcript to improve its formatting and readability. It can also fix some errors in the transcript.
 
 Putting these models together created a subtitles file that has very little errors. I can review the subtitles by playing the talk at 2x speed and fixing the errors spotted. Previously, with a less a accurate transcript, I have to stop and fix the subtitle every few seconds. But now, with this workflow, sometimes a minute of reviewing can go by without me having to fix anything.
 
@@ -325,61 +325,65 @@ GEMINI_API_KEY=
 OPENAI_API_KEY=
 ```
 
-## Usage (Gemini)
+## Usage
 
-```sh
-# Start a project folder.
-mkdir projects/my-project
-cd projects/my-project
+1. **Create a project folder.**
 
-# Put video file in the project folder as "video.mp4".
-# Then, extract audio from the video file.
-ffmpeg -i video.mp4 -vn -c:a libmp3lame -q:a 4 audio.mp3
+   ```sh
+   mkdir projects/my-project
+   cd projects/my-project
+   ```
 
-# Create a "notes.txt" file. Put in relevant information about the video.
-# This helps improve the transcript accuracy.
-touch notes.txt
+2. **Add an audio file.**
 
-# -- Long audio ASR --
-# Perform ASR on the whole audio file so that we can get the timing information.
-# This generates an ASR result file, which is quite inaccurate for Thai language, but has timing information.
+   - Manually: Put an audio file as `audio.mp3` in the project folder.
 
-# Option A: Speechmatics
-tsx ../../scripts/asr.ts
+   - Download from YouTube:
 
-# Option B: iApp
-tsx ../../scripts/asr_iapp.ts
-tsx ../../scripts/iapp_to_speechmatics.ts
+     ```sh
+     ../../scripts/download_audio_from_youtube 'https://www.youtube.com/watch?v=vbIWSwz8NxQ'
+     ```
 
-# -- Partition and slicing --
-# Use the ASR result to partition the video/audio into parts.
-tsx ../../scripts/partition.ts
+3. **Start server.** This will show a URL to access the web interface.
 
-# Cut the audio and video into parts.
-tsx ../../scripts/video_slice.ts
-tsx ../../scripts/audio_slice.ts
+   ```sh
+   bun ../../server/index.ts
+   ```
 
-# For first part:
-export PART_NAME=part_01
-tsx ../../scripts/audio_transcribe.ts # - or -
-tsx ../../scripts/video_transcribe.ts
+4. **Enter transcription notes.** This will help the model generate a more accurate transcript.
 
-# Create a "improvement_notes.txt" file.
-# This notes will be used in the transcript improvement process.
-touch improvement_notes.txt
+   ![](https://im.dt.in.th/ipfs/bafybeiakjvfec7v32n6rr6bkrwlgowg2yuq5gysvtsr4aqe5rvxr3hyceq/image.webp)
 
-# Improve the transcript.
-tsx ../../scripts/transcript_improve.ts
+5. **Obtain word-level timestamps.** This will be used for partitioning the long audio file into smaller segments, as well as for aligning the transcript with the ASR output.
 
-# Align the improved transcript with the ASR result.
-tsx ../../scripts/align.ts
+   - If the video is already on YouTube and it has already generate an automatic caption, you can import it directly.
 
-# For subsequent parts:
-tsx ../../scripts/process_part.ts part_02
+     ![](https://im.dt.in.th/ipfs/bafybeieuzf2w3tlpctoneym2am4jg4b6w3vjlzktmyuielqgfmhqbbor5q/image.webp)
 
-# Finally, combine the aligned parts into a single transcript.
-tsx ../../scripts/create_vtt.ts
+   - Otherwise, switch the **ASR** preset to **Speechmatics** to use Speechmatics to obtain the word-level timestamps.
 
-# Calculate the price (how much we paid).
-tsx ../../scripts/calculate_price.ts
-```
+6. **Generate partitions.** This will split the audio file into smaller segments based on the gaps found in the audio, as determined by the word-level timestamps.
+
+   ![](https://im.dt.in.th/ipfs/bafybeigxcjzn5anvcwkygb6hpkrjecdtaoxyrufr5kjkkjufagkk45w7v4/image.webp)
+
+7. **Transcribe with Gemini for each part.** This will generate a transcript using the Gemini model.
+
+   ![](https://im.dt.in.th/ipfs/bafybeihzmwulsu53g7htha7gku3seyr76ueqiwxigqbcemggfacsyxgrkq/image.webp)
+
+   > [!TIP]
+   > Hold down the Alt key while clicking the menu item to perform the operation in the background. This lets you start multiple transcriptions more easily.
+
+8. **Once an initial transcript is generated, improve it with Claude.**
+
+   ![](https://im.dt.in.th/ipfs/bafybeihzmwulsu53g7htha7gku3seyr76ueqiwxigqbcemggfacsyxgrkq/image.webp)
+
+9. **Once all the parts have a transcript, align it.**
+
+   ![](https://im.dt.in.th/ipfs/bafybeiggoyteuhrajuqzc4ygpvwcgh2nikqc3wrqep5ojgix23ftju6bda/image.webp)
+
+10. **Once the alignment process is done, you can obtain the resulting VTT file.**
+
+    ![](https://im.dt.in.th/ipfs/bafybeiaqch34n2cjjm2cqttyrgm2savlov2wbtfqm7q665sgvivliarkhy/image.webp)
+
+    > [!CAUTION]
+    > The generated VTT file may contain errors. Please review it before using it.
