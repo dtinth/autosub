@@ -80,9 +80,8 @@ ${fs.readFileSync("notes.txt", "utf8").trim()}
 </NOTES>`;
   }
 
-  const prompt = `Generate a transcript of the speech.
+  const prompt = `Generate a transcript of the speech in its original language.
 
-- The speech is in Thai language.
 - For English words, if it is a common word, then spell it using lowercase (e.g. oscillator). If it is a proper noun, capitalize it properly (e.g. Google Chrome). If it's an API name or part of computer code, use verbatim capitalization (e.g. getElementById).
 - For Thai text, do not add a space between words. Only add spaces between sentences or when there is obvious pausing.
 - For technical terms, in general, spell it in English (e.g. canvas, vertex, scene). Only transliterate it to Thai if it is a very common word and commonly spelled in Thai (e.g. ลิงก์, เคส, อัพเกรด, โปรแกรมเมอร์).
