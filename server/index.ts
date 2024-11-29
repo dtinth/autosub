@@ -150,8 +150,12 @@ ${notes}</textarea
                   ${operationLink(speechmaticsAsrTarget(), {
                     actions: [
                       {
-                        action: "asr?model=speechmatics",
-                        title: "Generate ASR",
+                        action: "asr?model=speechmatics&language=th",
+                        title: "Generate ASR (th)",
+                      },
+                      {
+                        action: "asr?model=speechmatics&language=en",
+                        title: "Generate ASR (en)",
                       },
                     ],
                   })}
@@ -278,8 +282,10 @@ ${notes}</textarea
   .post(
     "/asr",
     ({ query }) =>
-      respondWithOperation(() => speechmaticsAsrTarget().createOperation()),
-    { query: t.Object({ model: t.String() }) }
+      respondWithOperation(() =>
+        speechmaticsAsrTarget().createOperation(query.language as any)
+      ),
+    { query: t.Object({ model: t.String(), language: t.String() }) }
   )
   .get(
     "/asr-json",
@@ -610,10 +616,11 @@ function respondWithOperation(factory: () => Promise<OperationCreateResult>) {
 }
 
 function speechmaticsAsrTarget() {
-  return new Target<void, SpeechmaticsASRResult>({
+  type Language = "th" | "en";
+  return new Target<Language, SpeechmaticsASRResult>({
     name: "full_asr_speechmatics",
     title: "ASR with Speechmatics",
-    work: async (o) => {
+    work: async (o, language) => {
       const sm = new speechmatics.Speechmatics({
         apiKey: process.env.SPEECHMATICS_API_KEY!,
       });
@@ -627,7 +634,7 @@ function speechmaticsAsrTarget() {
           { data: input, fileName: `${projectName}_audio.mp3` },
           {
             transcription_config: {
-              language: "th",
+              language,
               operating_point: "standard", // enhanced
             },
           },
@@ -757,6 +764,7 @@ async function operationLink(
   const id = await target.tryFetchOperationId();
   let btnClass = "btn-secondary";
   let href = "";
+  let status = "";
   if (id) {
     const operation = await findOperation(id);
     btnClass = {
@@ -765,6 +773,7 @@ async function operationLink(
       completed: "btn-success",
       failed: "btn-danger",
     }[operation?.status || ""];
+    status = operation?.status || "";
     href = `operations?id=${id}`;
   }
   const mainButton = href
@@ -773,7 +782,11 @@ async function operationLink(
         ${target.name}
       </button>`;
   return html`
-    <div class="btn-group">
+    <div
+      class="btn-group"
+      data-operation-target="${target.name}"
+      data-operation-status="${status}"
+    >
       ${mainButton}
       <button
         type="button"
@@ -791,6 +804,7 @@ async function operationLink(
                 class="dropdown-item"
                 href="javascript:"
                 onclick="doPost(${JSON.stringify(x.action)},event)"
+                data-action-title="${x.title}"
                 >${x.title}</a
               >
             </li>`
@@ -860,7 +874,7 @@ async function partsTable(preset: TranscriberPreset) {
             );
           }
           return html`
-            <tr>
+            <tr data-part-name="${part.name}" data-testid="Part row">
               <td><a href="audio?part=${part.name}">${part.name}</a></td>
               <td>${actions}</td>
             </tr>
