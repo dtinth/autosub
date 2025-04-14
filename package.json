@@ -1,0 +1,20 @@
+{
+  "name": "autosub3",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@tsconfig/bun": "^1.0.7",
+    "@types/bun": "latest",
+    "@types/node": "^22.13.13"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "@ricky0123/vad-web": "0.0.22",
+    "@thai/sql-storage": "npm:@jsr/thai__sql-storage",
+    "incomplete-json-parser": "^1.1.4",
+    "p-limit": "^6.2.0"
+  }
+}
