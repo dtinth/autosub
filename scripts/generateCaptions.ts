@@ -116,7 +116,7 @@ async function main() {
       }
       toTranscribe.push(segment);
       totalDuration += duration(segment);
-      if (totalDuration > 180) break;
+      if (totalDuration > 60) break;
     }
     if (!toTranscribe.length) {
       return { continue: false, message: "No segments to transcribe" };
@@ -421,6 +421,11 @@ Transcribe the following audio files.`,
       logTo(unconfirmedOutput.length - 1);
     }
     logTo(unconfirmedOutput.length);
+    if (output.length !== ids.length) {
+      const actual = output.length;
+      output.length = 0;
+      throw new Error(`Expected ${ids.length} outputs but got ${actual}`);
+    }
   } catch (e: any) {
     console.error("[processAudio]", e);
     error = String(e?.stack || e);
