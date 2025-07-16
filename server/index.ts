@@ -590,6 +590,16 @@ ${notes}</textarea
   );
 
 async function getCombinedTranscript() {
+  if (fs.existsSync("manual_transcript.txt")) {
+    const manualTranscript = fs.readFileSync("manual_transcript.txt", "utf-8");
+    // Separate segments by empty lines
+    const segments = manualTranscript
+      .split(/\n\s*\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return segments.map((s) => `${s.replace(/\r?\n/s, "⏎")}`).join("\n");
+  }
+
   const { partitions } = await partitionsTarget().fetchResult();
   const parts: string[] = [];
   for (const partition of partitions) {
